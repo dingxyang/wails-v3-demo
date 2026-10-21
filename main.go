@@ -2,11 +2,11 @@ package main
 
 import (
 	"embed"
-
 	"log"
-	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/updater"
+	"github.com/wailsapp/wails/v3/pkg/updater/providers/github"
 )
 
 // Wails uses Go's `embed` package to embed the frontend files into the binary.
@@ -17,28 +17,22 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-func init() {
-	// Register a custom event whose associated data type is string.
-	// This is not required, but the binding generator will pick up registered events
-	// and provide a strongly typed JS/TS API for them.
-	application.RegisterEvent[string]("time")
-}
+// Version is the running application version. Keep it in sync with
+// build/config.yml and with GitHub release tags (a leading "v" is allowed).
+var Version = "0.0.1"
 
-// main function serves as the application's entry point. It initializes the application, creates a window,
-// and starts a goroutine that emits a time-based event every second. It subsequently runs the application and
-// logs any error that might occur.
+// updateRepository is the public GitHub repository that hosts releases used by
+// the auto-updater. Assets must contain the OS and architecture in their
+// filename (e.g. wails-v3-demo-darwin-arm64.zip) so the updater can pick one.
+const updateRepository = "dingxyang/wails-v3-demo"
+
 func main() {
-
-	// Create a new Wails application by providing the necessary options.
-	// Variables 'Name' and 'Description' are for application metadata.
-	// 'Assets' configures the asset server with the 'FS' variable pointing to the frontend files.
-	// 'Bind' is a list of Go struct instances. The frontend has access to the methods of these instances.
-	// 'Mac' options tailor the application when running an macOS.
 	app := application.New(application.Options{
-		Name:        "wails-v3-demo",
-		Description: "A demo of using raw HTML & CSS",
+		Name:        "简译",
+		Description: "基于免费翻译服务的桌面翻译工具",
 		Services: []application.Service{
-			application.NewService(&GreetService{}),
+			application.NewService(NewTranslationService()),
+			application.NewService(&UpdateService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -48,16 +42,12 @@ func main() {
 		},
 	})
 
-	// Create a new window with the necessary options.
-	// 'Title' is the title of the window.
-	// 'Mac' options tailor the window when running on macOS.
-	// 'BackgroundColour' is the background colour of the window.
-	// 'URL' is the URL that will be loaded into the webview.
+	setupUpdater(app)
+
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "Window 1",
-		// Window sized to the golden ratio (1000 / 618 ≈ 1.618).
-		Width:  1000,
-		Height: 618,
+		Title:  "简译",
+		Width:  1080,
+		Height: 720,
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,
@@ -67,21 +57,32 @@ func main() {
 		URL:              "/",
 	})
 
-	// Create a goroutine that emits an event containing the current time every second.
-	// The frontend can listen to this event and update the UI accordingly.
-	go func() {
-		for {
-			now := time.Now().Format(time.RFC1123)
-			app.Event.Emit("time", now)
-			time.Sleep(time.Second)
-		}
-	}()
-
-	// Run the application. This blocks until the application has been exited.
-	err := app.Run()
-
-	// If an error occurred while running the application, log it and exit.
-	if err != nil {
+	if err := app.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// setupUpdater configures the framework updater against GitHub releases.
+// Background checks are driven by UpdateService; the built-in update window is
+// only opened when the user asks to update.
+func setupUpdater(app *application.App) {
+	provider, err := github.New(github.Config{
+		Repository:    updateRepository,
+		ChecksumAsset: "checksums.txt",
+	})
+	if err != nil {
+		log.Printf("自动更新未启用: %v", err)
+		return
+	}
+
+	err = app.Updater.Init(updater.Config{
+		CurrentVersion: Version,
+		Providers:      []updater.Provider{provider},
+		Window: &updater.BuiltinWindow{
+			Options: updater.WindowOptions{Title: "简译更新"},
+		},
+	})
+	if err != nil {
+		log.Printf("自动更新未启用: %v", err)
 	}
 }

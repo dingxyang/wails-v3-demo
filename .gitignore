@@ -1,12 +1,10 @@
 .task
 bin
-build/
 frontend/dist
 frontend/node_modules
+# Wails build assets are tracked so CI can package the app; only generated files are ignored.
 build/linux/appimage/build
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
-# Mobile generated (per-machine; overlays hold absolute paths)
-build/ios/xcode/overlay.json
-build/ios/xcode/gen/
-build/android/overlay.json
-build/android/gen/
+# Mobile assets are not committed (desktop-only CI); Taskfile includes are optional.
+build/ios/
+build/android/
