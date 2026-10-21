@@ -1,12 +1,10 @@
 name: Release
 
-# Push a tag like v0.1.0 to build desktop packages and publish a GitHub Release.
-# The release assets are named so the built-in Wails updater can find them:
+# Push a tag like v0.1.0 to build macOS packages and publish a GitHub Release.
+# The release asset is named so the built-in Wails updater can find it:
 #   - wails-v3-demo-darwin-arm64-amd64.zip   (universal .app)
-#   - wails-v3-demo-windows-amd64.zip        (portable .exe)
-#   - wails-v3-demo-linux-amd64.tar.gz       (standalone binary)
-# Installers are uploaded too, but their names deliberately omit the platform
-# token so the updater does not mistake them for update payloads.
+# Optional release notes: add .github/release-notes/<tag>.md (e.g. v0.1.1.md).
+# Without it, GitHub generates the notes from commits.
 on:
   push:
     tags:
@@ -33,12 +31,6 @@ jobs:
           - name: macOS universal
             os: macos-14
             artifact: darwin
-          - name: Windows amd64
-            os: windows-latest
-            artifact: windows
-          - name: Linux amd64
-            os: ubuntu-latest
-            artifact: linux
     steps:
       - uses: actions/checkout@v4
 
@@ -67,12 +59,6 @@ jobs:
           go install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
-
       - name: Sync version from tag
         shell: bash
         run: |
@@ -94,17 +80,10 @@ jobs:
           sedi "s/^(  version: )\"[^\"]*\"/\1\"${VERSION}\"/" build/config.yml
           sedi "/<key>CFBundleVersion<\/key>/{n;s#<string>[^<]*</string>#<string>${VERSION}</string>#;}" build/darwin/Info.plist
           sedi "/<key>CFBundleShortVersionString<\/key>/{n;s#<string>[^<]*</string>#<string>${VERSION}</string>#;}" build/darwin/Info.plist
-          sedi "s/(\"file_version\": \")[^\"]*\"/\1${VERSION}\"/" build/windows/info.json
-          sedi "s/(\"ProductVersion\": \")[^\"]*\"/\1${VERSION}\"/" build/windows/info.json
-          sedi "s/(!define INFO_PRODUCTVERSION \")[^\"]*\"/\1${VERSION}\"/" build/windows/nsis/wails_tools.nsh
-          sedi "s/^version: \".*\"$/version: \"${VERSION}\"/" build/linux/nfpm/nfpm.yaml
 
           grep -q "var Version = \"${VERSION}\"" main.go
           grep -q "\"${VERSION}\"" build/config.yml
           grep -q "<string>${VERSION}</string>" build/darwin/Info.plist
-          grep -q "\"${VERSION}\"" build/windows/info.json
-          grep -q "\"${VERSION}\"" build/windows/nsis/wails_tools.nsh
-          grep -q "\"${VERSION}\"" build/linux/nfpm/nfpm.yaml
 
       - name: Package macOS
         if: runner.os == 'macOS'
@@ -113,30 +92,6 @@ jobs:
           wails3 task darwin:package:universal
           mkdir -p dist
           ditto -c -k --keepParent "bin/wails-v3-demo.app" "dist/wails-v3-demo-darwin-arm64-amd64.zip"
-
-      - name: Package Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          wails3 task windows:package INSTALL_SCOPE=user
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item "bin/wails-v3-demo-amd64-installer.exe" "dist/"
-          Compress-Archive -Path "bin/wails-v3-demo.exe" -DestinationPath "dist/wails-v3-demo-windows-amd64.zip" -Force
-
-      - name: Package Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GIT_COMMITTER_NAME: ${{ github.actor }}
-          GIT_COMMITTER_EMAIL: ${{ github.actor }}@users.noreply.github.com
-        run: |
-          wails3 task linux:package
-          mkdir -p dist
-          tar -czf "dist/wails-v3-demo-linux-amd64.tar.gz" -C bin wails-v3-demo
-          cp bin/*.AppImage dist/ 2>/dev/null || true
-          cp bin/*.deb dist/ 2>/dev/null || true
-          cp bin/*.rpm dist/ 2>/dev/null || true
-          cp bin/*.pkg.tar.zst dist/ 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
@@ -162,8 +117,20 @@ jobs:
             | xargs sha256sum > checksums.txt
           cat checksums.txt
 
+      - name: Collect release notes
+        id: notes
+        shell: bash
+        run: |
+          notes=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then
+            echo "body_path=$notes" >> "$GITHUB_OUTPUT"
+          else
+            echo "No ${notes}; GitHub will generate release notes from commits."
+          fi
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           fail_on_unmatched_files: true
+          body_path: ${{ steps.notes.outputs.body_path }}
           generate_release_notes: true
